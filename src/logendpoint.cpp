@@ -63,6 +63,7 @@ LogEndpoint::LogEndpoint(std::string name, LogOptions conf)
 {
     assert(!_config.logs_dir.empty());
     _add_sys_comp_id(LOG_ENDPOINT_SYSTEM_ID, 0);
+#if !defined(__ANDROID__)
     _fsync_cb.aio_fildes = -1;
 
 #if HAVE_DECL_AIO_INIT
@@ -71,6 +72,8 @@ LogEndpoint::LogEndpoint(std::string name, LogOptions conf)
     aio_init_data.aio_num = 1;
     aio_init_data.aio_idle_time = 3; // make sure to keep the thread running
     aio_init(&aio_init_data);
+#endif
+
 #endif
     if (_config.fcu_id != -1) {
         _target_system_id = _config.fcu_id;
@@ -374,7 +377,9 @@ void LogEndpoint::stop()
     fsync(_file);
     close(_file);
     _file = -1;
+#if !defined(__ANDROID__)
     _fsync_cb.aio_fildes = -1;
+#endif
 
     // change file permissions to read-only to mark them as finished
     char log_file[PATH_MAX];
@@ -409,6 +414,7 @@ bool LogEndpoint::start()
         goto logging_timeout_error;
     }
 
+#if !defined(__ANDROID__)
     // Call fsync once per second
     _timeout.fsync = Mainloop::get_instance().add_timeout(MSEC_PER_SEC,
                                                           std::bind(&LogEndpoint::_fsync, this),
@@ -417,6 +423,7 @@ bool LogEndpoint::start()
         log_error("Unable to add timeout");
         goto fsync_timeout_error;
     }
+#endif
 
     log_info("Logging target system_id=%u on %s", _target_system_id, _filename);
 
@@ -443,6 +450,7 @@ bool LogEndpoint::_alive_timeout()
     return true;
 }
 
+#if !defined(__ANDROID__)
 bool LogEndpoint::_fsync()
 {
     if (_file < 0) {
@@ -460,6 +468,7 @@ bool LogEndpoint::_fsync()
 
     return true;
 }
+#endif
 
 void LogEndpoint::_remove_logging_start_timeout()
 {

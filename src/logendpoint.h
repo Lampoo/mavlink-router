@@ -19,7 +19,9 @@
 
 #include <common/conf_file.h>
 
+#if !defined(__ANDROID__)
 #include <aio.h>
+#endif
 #include <assert.h>
 #include <dirent.h>
 #include <string>
@@ -78,7 +80,9 @@ protected:
         Timeout *alive = nullptr;
     } _timeout;
     uint32_t _timeout_write_total = 0;
+#if !defined(__ANDROID__)
     aiocb _fsync_cb = {};
+#endif
 
     virtual const char *_get_logfile_extension() = 0;
 
@@ -89,7 +93,9 @@ protected:
     virtual bool _logging_start_timeout() = 0;
     virtual bool _alive_timeout();
 
+#if !defined(__ANDROID__)
     bool _fsync();
+#endif
 
     void _handle_auto_start_stop(const struct buffer *pbuf);
 

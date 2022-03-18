@@ -39,6 +39,4 @@ set_property(
 
 target_link_libraries(
     ${module_name}
-    rt
-    pthread
 )

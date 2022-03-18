@@ -61,6 +61,8 @@ static const struct option long_options[] = {{"endpoints", required_argument, nu
 
 static const char *short_options = "he:rt:c:d:l:p:g:vV:s:";
 
+static const char *prog_invocation_short_name = nullptr;
+
 static void help(FILE *fp)
 {
     fprintf(
@@ -89,7 +91,7 @@ static void help(FILE *fp)
         "  -V --version                 Show version\n"
         "  -s --sniffer-sysid           Sysid that all messages are sent to.\n"
         "  -h --help                    Print this message\n",
-        program_invocation_short_name);
+        prog_invocation_short_name);
 }
 
 static uint32_t find_next_udp_port(const std::string &ip, const Configuration &config)
@@ -589,6 +591,10 @@ fail:
 
 int main(int argc, char *argv[])
 {
+    prog_invocation_short_name = strrchr(argv[0], '/');
+    if (!prog_invocation_short_name)
+        prog_invocation_short_name = argv[0];
+
     Mainloop &mainloop = Mainloop::init();
     int retcode;
     Configuration config{};
