@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include <stdexcept>
 #include <stdio.h>
-#include <string>
+#include <string.h>
 #include <sys/stat.h>
 
 #include <common/conf_file.h>
@@ -36,8 +36,13 @@
 #include "logendpoint.h"
 #include "mainloop.h"
 
+#ifdef ANDROID
+#define DEFAULT_CONFFILE "/system/etc/mavlink-router/main.conf"
+#define DEFAULT_CONF_DIR "/system/etc/mavlink-router/config.d"
+#else
 #define DEFAULT_CONFFILE "/etc/mavlink-router/main.conf"
 #define DEFAULT_CONF_DIR "/etc/mavlink-router/config.d"
+#endif
 
 extern const char *BUILD_VERSION;
 
