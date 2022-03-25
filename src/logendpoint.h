@@ -19,7 +19,7 @@
 
 #include <common/conf_file.h>
 
-#if !defined(__ANDROID__)
+#if !defined(ANDROID)
 #include <aio.h>
 #endif
 #include <assert.h>
@@ -80,7 +80,7 @@ protected:
         Timeout *alive = nullptr;
     } _timeout;
     uint32_t _timeout_write_total = 0;
-#if !defined(__ANDROID__)
+#if !defined(ANDROID)
     aiocb _fsync_cb = {};
 #endif
 
@@ -93,7 +93,7 @@ protected:
     virtual bool _logging_start_timeout() = 0;
     virtual bool _alive_timeout();
 
-#if !defined(__ANDROID__)
+#if !defined(ANDROID)
     bool _fsync();
 #endif
 

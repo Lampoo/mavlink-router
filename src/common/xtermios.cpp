@@ -23,7 +23,7 @@
 
 int reset_uart(int fd)
 {
-#if !defined(__ANDROID__)
+#if !defined(ANDROID)
     struct termios tc = {};
     /* See termios(3) */
     const cc_t default_cc[]
