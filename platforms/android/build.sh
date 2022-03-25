@@ -2,7 +2,8 @@
 
 set -ex
 
-THIS_DIR="$(cd -P "$(dirname "${BASH_SOURCES[0]}")" && pwd)"
+THIS_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 SOURCE_DIR=$(cd $THIS_DIR/../.. && pwd)
 BUILD_TOP=$SOURCE_DIR/build
 
@@ -20,7 +21,7 @@ for target in $ANDROID_ABIS; do
     fi
   else
     if [ ! -d $BUILD_DIR ] ; then
-      mkdir -p $BILD_DIR
+      mkdir -p $BUILD_DIR
     fi
 
     cd $BUILD_DIR && cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$THIS_DIR/install/$target -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
