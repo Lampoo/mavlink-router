@@ -8,7 +8,6 @@ add_executable(${module_name}
     common/xtermios.cpp
 
     # mavlink-routerd sources
-    main.cpp
     autolog.cpp
     binlog.cpp
     dedup.cpp
@@ -24,12 +23,12 @@ add_executable(${module_name}
 
 set_property(
     TARGET ${module_name}
-    PROPERTY CXX_STANDARD 14
+    PROPERTY CXX_STANDARD 17
 )
 
 set_property(
     TARGET ${module_name}
-    PROPERTY COMPILE_OPTIONS -fPIC
+    PROPERTY COMPILE_OPTIONS -fPIC -fpic
 )
 
 #target_compile_options(

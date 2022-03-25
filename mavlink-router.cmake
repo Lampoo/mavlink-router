@@ -11,6 +11,10 @@ add_definitions(-DVERSION=\"${MAVLINK_ROUTER_VERSION_GIT_REVISION}\" -DPACKAGE=\
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -pedantic -Wextra -fPIC")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -pedantic -Wextra -Wno-implicit-fallthrough -fPIC")
+if (NOT ANDROID)
+  set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -lrt")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lrt")
+endif()
 
 include_directories(
     modules/mavlink_c_library_v2/ardupilotmega
