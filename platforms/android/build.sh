@@ -24,12 +24,12 @@ for target in $ANDROID_ABIS; do
       mkdir -p $BUILD_DIR
     fi
 
-    cd $BUILD_DIR && cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$THIS_DIR/install/$target -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
+    cd $BUILD_DIR && cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$SOURCE_DIR/install/$target -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
       -DANDROID_ABI=$target \
       -DANDROID_PLATFORM=$ANDROID_PLATFORM \
       -DANDROID_STL=c++_shared \
       -DANDROID_CPP_FEATURES="rtti exceptions" \
       -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \
-      $SOURCE_DIR && make -j$NR_CPU
+      $SOURCE_DIR && make -j$NR_CPU && make install
   fi
 done

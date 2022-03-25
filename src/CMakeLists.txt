@@ -39,3 +39,5 @@ set_property(
 target_link_libraries(
     ${module_name}
 )
+
+install(TARGETS ${module_name} DESTINATION bin)
