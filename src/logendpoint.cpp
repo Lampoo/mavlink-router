@@ -63,10 +63,10 @@ LogEndpoint::LogEndpoint(std::string name, LogOptions conf)
 {
     assert(!_config.logs_dir.empty());
     _add_sys_comp_id(LOG_ENDPOINT_SYSTEM_ID, 0);
-#if !defined(ANDROID)
+#if defined(HAVE_AIO_H)
     _fsync_cb.aio_fildes = -1;
 
-#if HAVE_DECL_AIO_INIT
+#if defined(HAVE_DECL_AIO_INIT)
     aioinit aio_init_data{};
     aio_init_data.aio_threads = 1;
     aio_init_data.aio_num = 1;
@@ -377,7 +377,7 @@ void LogEndpoint::stop()
     fsync(_file);
     close(_file);
     _file = -1;
-#if !defined(ANDROID)
+#if defined(HAVE_AIO_H)
     _fsync_cb.aio_fildes = -1;
 #endif
 
@@ -414,7 +414,7 @@ bool LogEndpoint::start()
         goto logging_timeout_error;
     }
 
-#if !defined(ANDROID)
+#if defined(HAVE_AIO_H)
     // Call fsync once per second
     _timeout.fsync = Mainloop::get_instance().add_timeout(MSEC_PER_SEC,
                                                           std::bind(&LogEndpoint::_fsync, this),
@@ -429,9 +429,11 @@ bool LogEndpoint::start()
 
     return true;
 
+#if defined(HAVE_AIO_H)
 fsync_timeout_error:
     Mainloop::get_instance().del_timeout(_timeout.logging_start);
     _timeout.logging_start = nullptr;
+#endif
 logging_timeout_error:
     close(_file);
     _file = -1;
@@ -450,7 +452,7 @@ bool LogEndpoint::_alive_timeout()
     return true;
 }
 
-#if !defined(ANDROID)
+#if defined(HAVE_AIO_H)
 bool LogEndpoint::_fsync()
 {
     if (_file < 0) {

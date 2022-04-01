@@ -31,13 +31,8 @@ set_property(
     PROPERTY COMPILE_OPTIONS -fPIC -fpic
 )
 
-#target_compile_options(
-#    ${module_name}
-#    PRIVATE -Wno-c++11-narrowing
-#)
-
-target_link_libraries(
-    ${module_name}
-)
+if(${rt_FOUND})
+    target_link_libraries(${module_name} ${rt_LIBRARIES})
+endif()
 
 install(TARGETS ${module_name} DESTINATION bin)
