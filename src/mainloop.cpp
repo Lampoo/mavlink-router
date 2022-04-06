@@ -369,6 +369,10 @@ bool Mainloop::add_endpoints(const Configuration &config)
     for (const auto &conf : config.uart_configs) {
         auto uart = std::make_shared<UartEndpoint>(conf.name);
 
+        if (!uart->validate_config(conf)) {
+            return false;
+        }
+
         if (!uart->setup(conf)) {
             return false;
         }
@@ -380,6 +384,10 @@ bool Mainloop::add_endpoints(const Configuration &config)
 
     for (const auto &conf : config.udp_configs) {
         auto udp = std::make_shared<UdpEndpoint>(conf.name);
+
+        if (!udp->validate_config(conf)) {
+            return false;
+        }
 
         if (!udp->setup(conf)) {
             return false;
@@ -393,6 +401,10 @@ bool Mainloop::add_endpoints(const Configuration &config)
     // Create TCP endpoints
     for (const auto &conf : config.tcp_configs) {
         auto tcp = std::make_shared<TcpEndpoint>(conf.name);
+
+        if (!tcp->validate_config(conf)) { // handles reconnect and add_fd
+            return false;        // only on fatal errors
+        }
 
         if (!tcp->setup(conf)) { // handles reconnect and add_fd
             return false;        // only on fatal errors
@@ -408,7 +420,7 @@ bool Mainloop::add_endpoints(const Configuration &config)
         }
 
         for (auto other : g_endpoints) { // find other endpoints in group
-            if (other != e && e->get_group_name() == e->get_group_name()) {
+            if (other != e && other->get_group_name() == e->get_group_name()) {
                 e->link_group_member(other);
             }
         }

@@ -198,17 +198,23 @@ int Endpoint::handle_read()
             break;
         }
 
-        if (allowed_by_dedup(&buf)) {
-            _add_sys_comp_id(buf.curr.src_sysid, buf.curr.src_compid);
-            Mainloop::get_instance().route_msg(&buf);
-        } else {
-            if (Log::get_max_level() >= Log::Level::DEBUG) {
-                log_debug("Message %u discarded by de-duplication", buf.curr.msg_id);
-            }
-        }
+        handle_msg(&buf);
     }
 
     return r;
+}
+
+int Endpoint::handle_msg(struct buffer *pbuf)
+{
+    if (allowed_by_dedup(pbuf)) {
+        _add_sys_comp_id(pbuf->curr.src_sysid, pbuf->curr.src_compid);
+        Mainloop::get_instance().route_msg(pbuf);
+    } else {
+        if (Log::get_max_level() >= Log::Level::DEBUG) {
+            log_debug("Message %u discarded by de-duplication", pbuf->curr.msg_id);
+        }
+    }
+    return 0;
 }
 
 int Endpoint::read_msg(struct buffer *pbuf)
@@ -627,12 +633,8 @@ UartEndpoint::~UartEndpoint()
     }
 }
 
-bool UartEndpoint::setup(UartEndpointConfig conf)
+bool UartEndpoint::setup(const UartEndpointConfig& conf)
 {
-    if (!this->validate_config(conf)) {
-        return false;
-    }
-
     if (!this->open(conf.device.c_str())) {
         return false;
     }
@@ -933,10 +935,9 @@ bool UartEndpoint::validate_config(const UartEndpointConfig &config)
 }
 
 UdpEndpoint::UdpEndpoint(std::string name)
-    : Endpoint{ENDPOINT_TYPE_UDP, std::move(name)}
+    : Endpoint{ENDPOINT_TYPE_UDP, std::move(name)}, is_server(false)
 {
-    bzero(&sockaddr, sizeof(sockaddr));
-    bzero(&sockaddr6, sizeof(sockaddr6));
+    bzero(&sockaddr_, sizeof(sockaddr_));
 }
 
 UdpEndpoint::~UdpEndpoint()
@@ -946,12 +947,8 @@ UdpEndpoint::~UdpEndpoint()
     }
 }
 
-bool UdpEndpoint::setup(UdpEndpointConfig conf)
+bool UdpEndpoint::setup(const UdpEndpointConfig& conf)
 {
-    if (!this->validate_config(conf)) {
-        return false;
-    }
-
     if (!this->open(conf.address.c_str(), conf.port, conf.mode)) {
         log_error("Could not open %s:%ld", conf.address.c_str(), conf.port);
         return false;
@@ -972,6 +969,8 @@ bool UdpEndpoint::setup(UdpEndpointConfig conf)
 
 int UdpEndpoint::open_ipv6(const char *ip, unsigned long port, UdpEndpointConfig::Mode mode)
 {
+    char ip_str[256];
+
     fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (fd < 0) {
         log_error("Could not create IPv6 socket for %s:%lu (%m)", ip, port);
@@ -979,20 +978,22 @@ int UdpEndpoint::open_ipv6(const char *ip, unsigned long port, UdpEndpointConfig
     }
 
     /* strip square brackets from ip string */
-    char *ip_str = strdup(&ip[1]);
-    ip_str[strlen(ip_str) - 1] = '\0';
+    if (ip[0] == '[') {
+        strncpy(ip_str, ip+1, sizeof(ip_str));
+        char* p = strrchr(ip_str, ']');
+        if (p) *p = 0;
+    } else {
+        strncpy(ip_str, ip, sizeof(ip_str));
+    }
+    char *ifname = strchr(ip_str, '%');
+    if (ifname) *ifname++ = 0;
 
-    /* remove omittable zeros from IPv6 address */
-    sockaddr_in6 ip_addr;
-    inet_pton(AF_INET6, ip_str, &ip_addr.sin6_addr);
-    inet_ntop(AF_INET6, &(ip_addr.sin6_addr), ip_str, strlen(ip));
-
-    sockaddr6.sin6_family = AF_INET6;
-    sockaddr6.sin6_port = htons(port);
+    sockaddr_.v6.sin6_family = AF_INET6;
+    sockaddr_.v6.sin6_port = htons(port);
 
     /* multicast address needs to listen to all, but "filter" incoming packets */
     if (mode == UdpEndpointConfig::Mode::Server && ipv6_is_multicast(ip_str)) {
-        sockaddr6.sin6_addr = in6addr_any;
+        sockaddr_.v6.sin6_addr = in6addr_any;
 
         struct ipv6_mreq group;
         inet_pton(AF_INET6, ip_str, &group.ipv6mr_multiaddr);
@@ -1003,29 +1004,31 @@ int UdpEndpoint::open_ipv6(const char *ip, unsigned long port, UdpEndpointConfig
             goto fail;
         }
     } else {
-        inet_pton(AF_INET6, ip_str, &sockaddr6.sin6_addr);
+        inet_pton(AF_INET6, ip_str, &sockaddr_.v6.sin6_addr);
     }
 
     /* link-local address needs a scope ID */
-    if (ipv6_is_linklocal(ip_str)) {
-        sockaddr6.sin6_scope_id = ipv6_get_scope_id(ip_str);
+    if (ifname) {
+        sockaddr_.v6.sin6_scope_id = if_nametoindex(ifname);
+        if (sockaddr_.v6.sin6_scope_id == 0)
+            sockaddr_.v6.sin6_scope_id = atoi(ifname);
+    } else if (ipv6_is_linklocal(ip_str)) {
+        sockaddr_.v6.sin6_scope_id = ipv6_get_scope_id(ip_str);
     }
 
     if (mode == UdpEndpointConfig::Mode::Server) {
-        if (bind(fd, (struct sockaddr *)&sockaddr6, sizeof(sockaddr6)) < 0) {
+        if (bind(fd, (struct sockaddr *)&sockaddr_.v6, sizeof(sockaddr_.v6)) < 0) {
             log_error("Error binding IPv6 socket for [%s]:%lu (%m)", ip_str, port);
             goto fail;
         }
-        sockaddr6.sin6_port = 0;
+        sockaddr_.v6.sin6_port = 0;
     }
 
-    config_sock.v6 = sockaddr6;
+    config_sock.v6 = sockaddr_.v6;
 
-    free(ip_str);
     return fd;
 
 fail:
-    free(ip_str);
     ::close(fd);
     fd = -1;
     return -EINVAL;
@@ -1039,19 +1042,19 @@ int UdpEndpoint::open_ipv4(const char *ip, unsigned long port, UdpEndpointConfig
         return -errno;
     }
 
-    sockaddr.sin_family = AF_INET;
-    sockaddr.sin_addr.s_addr = inet_addr(ip);
-    sockaddr.sin_port = htons(port);
+    sockaddr_.v4.sin_family = AF_INET;
+    sockaddr_.v4.sin_addr.s_addr = inet_addr(ip);
+    sockaddr_.v4.sin_port = htons(port);
 
     if (mode == UdpEndpointConfig::Mode::Server) {
-        if (bind(fd, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) < 0) {
+        if (bind(fd, (struct sockaddr *)&sockaddr_.v4, sizeof(sockaddr_.v4)) < 0) {
             log_error("Error binding IPv4 socket for %s:%lu (%m)", ip, port);
             goto fail;
         }
-        sockaddr.sin_port = 0;
+        sockaddr_.v4.sin_port = 0;
     }
 
-    config_sock.v4 = sockaddr;
+    config_sock.v4 = sockaddr_.v4;
 
     return fd;
 
@@ -1066,6 +1069,7 @@ bool UdpEndpoint::open(const char *ip, unsigned long port, UdpEndpointConfig::Mo
     const int broadcast_val = 1;
 
     this->is_ipv6 = ip_str_is_ipv6(ip);
+    this->is_server = (mode == UdpEndpointConfig::Mode::Server);
 
     // setup the special IPv6/IPv4 part
     if (this->is_ipv6) {
@@ -1119,11 +1123,11 @@ bool UdpEndpoint::_nomessage_timeout_cb(void *data)
     bool change = false;
 
     if (this->is_ipv6) {
-        change = memcmp(&sockaddr6, &config_sock.v6, sizeof(sockaddr6)) != 0;
-        sockaddr6 = config_sock.v6;
+        change = memcmp(&sockaddr_.v6, &config_sock.v6, sizeof(sockaddr_.v6)) != 0;
+        sockaddr_.v6 = config_sock.v6;
     } else {
-        change = memcmp(&sockaddr, &config_sock.v4, sizeof(sockaddr)) != 0;
-        sockaddr = config_sock.v4;
+        change = memcmp(&sockaddr_.v4, &config_sock.v4, sizeof(sockaddr_.v4)) != 0;
+        sockaddr_.v4 = config_sock.v4;
     }
 
     if (change) {
@@ -1140,11 +1144,11 @@ ssize_t UdpEndpoint::_read_msg(uint8_t *buf, size_t len)
     ssize_t r = 0;
 
     if (this->is_ipv6) {
-        addrlen = sizeof(sockaddr6);
-        sock = (struct sockaddr *)&sockaddr6;
+        addrlen = sizeof(sockaddr_.v6);
+        sock = (struct sockaddr *)&sockaddr_.v6;
     } else {
-        addrlen = sizeof(sockaddr);
-        sock = (struct sockaddr *)&sockaddr;
+        addrlen = sizeof(sockaddr_.v4);
+        sock = (struct sockaddr *)&sockaddr_.v4;
     }
 
     r = ::recvfrom(fd, buf, len, 0, sock, &addrlen);
@@ -1163,6 +1167,49 @@ ssize_t UdpEndpoint::_read_msg(uint8_t *buf, size_t len)
     return r;
 }
 
+int UdpEndpoint::handle_msg(struct buffer *pbuf)
+{
+    if (is_server) {
+        if (pbuf->curr.src_sysid != 0 && pbuf->curr.src_compid != 0) {
+            Sockaddress sockaddr(sockaddr_);
+            auto sender_iterator = std::find_if(sockaddr_senders_.begin(),
+                                                sockaddr_senders_.end(),
+                                                [&](const MAVLinkSockaddress &e) {
+                                                    if (e.first == sockaddr)
+                                                        return true;
+                                                    return false;
+                                                });
+            if (sender_iterator != sockaddr_senders_.end()) {
+                auto system_iterator
+                    = std::find_if(sender_iterator->second.begin(),
+                                   sender_iterator->second.end(),
+                                   [&](const MAVLinkSystem &e) {
+                                       if (e.get_system_id() == pbuf->curr.src_sysid)
+                                           return true;
+                                       return false;
+                                   });
+                if (system_iterator == sender_iterator->second.end()) {
+                    MAVLinkSystem system;
+                    system.set_system_id(pbuf->curr.src_sysid);
+                    system.add_component(pbuf->curr.src_compid);
+                    sender_iterator->second.push_back(system);
+                } else
+                    system_iterator->add_component(pbuf->curr.src_compid);
+            } else {
+                MAVLinkSystem system;
+                system.set_system_id(pbuf->curr.src_sysid);
+                system.add_component(pbuf->curr.src_compid);
+                sockaddr_senders_.push_back(
+                    MAVLinkSockaddress(sockaddr, MAVLinkSystemCollection()));
+                auto sender = sockaddr_senders_.back();
+                sender.second.push_back(system);
+            }
+        }
+    }
+
+    return Endpoint::handle_msg(pbuf);
+}
+
 int UdpEndpoint::write_msg(const struct buffer *pbuf)
 {
     struct sockaddr *sock;
@@ -1178,45 +1225,79 @@ int UdpEndpoint::write_msg(const struct buffer *pbuf)
         ;
     }
 
-    bool sock_connected = false;
-    if (this->is_ipv6) {
-        addrlen = sizeof(sockaddr6);
-        sock = (struct sockaddr *)&sockaddr6;
-        sock_connected = sockaddr6.sin6_port != 0;
+    if (is_server) {
+        std::for_each(
+            sockaddr_senders_.begin(),
+            sockaddr_senders_.end(),
+            [&](const MAVLinkSockaddress &e) {
+                std::for_each(e.second.begin(), e.second.begin(), [&](const MAVLinkSystem &s) {
+                    if (s.has_system(pbuf->curr.target_sysid) && s.has_component(pbuf->curr.target_compid)) {
+                        ssize_t r = ::sendto(fd, pbuf->data, pbuf->len, 0, e.first.addr(), e.first.addrlen());
+                        if (r == -1) {
+                            if (errno != EAGAIN && errno != ECONNREFUSED && errno != ENETUNREACH) {
+                                log_error("UDP %s: Error sending udp packet (%d:%s)",
+                                          _name.c_str(),
+                                          errno,
+                                          strerror(errno));
+                            }
+                        } else {
+                            /* Incomplete packet, we warn and discard the rest */
+                            if (r != (ssize_t)pbuf->len) {
+                                _incomplete_msgs++;
+                                log_debug("UDP %s: Discarding packet, incomplete write %zd but len=%u", _name.c_str(), r, pbuf->len);
+                            }
+
+                            log_debug("UDP [%d]%s: Wrote %zd bytes", fd, _name.c_str(), r);
+
+                            _stat.write.total++;
+                            _stat.write.bytes += pbuf->len;
+                        }
+                    }
+                });
+            });
+
+            return 0;
     } else {
-        addrlen = sizeof(sockaddr);
-        sock = (struct sockaddr *)&sockaddr;
-        sock_connected = sockaddr.sin_port != 0;
-    }
-
-    if (!sock_connected) {
-        log_debug("UDP %s: No one ever connected to us. No one to write for", _name.c_str());
-        return 0;
-    }
-
-    ssize_t r = ::sendto(fd, pbuf->data, pbuf->len, 0, sock, addrlen);
-    if (r == -1) {
-        if (errno != EAGAIN && errno != ECONNREFUSED && errno != ENETUNREACH) {
-            log_error("UDP %s: Error sending udp packet (%m)", _name.c_str());
+        bool sock_connected = false;
+        if (this->is_ipv6) {
+            addrlen = sizeof(sockaddr_.v6);
+            sock = (struct sockaddr *)&sockaddr_.v6;
+            sock_connected = sockaddr_.v6.sin6_port != 0;
+        } else {
+            addrlen = sizeof(sockaddr_.v4);
+            sock = (struct sockaddr *)&sockaddr_.v4;
+            sock_connected = sockaddr_.v4.sin_port != 0;
         }
-        return -errno;
-    };
 
-    _stat.write.total++;
-    _stat.write.bytes += pbuf->len;
+        if (!sock_connected) {
+            log_debug("UDP %s: No one ever connected to us. No one to write for", _name.c_str());
+            return 0;
+        }
 
-    /* Incomplete packet, we warn and discard the rest */
-    if (r != (ssize_t)pbuf->len) {
-        _incomplete_msgs++;
-        log_debug("UDP %s: Discarding packet, incomplete write %zd but len=%u",
-                  _name.c_str(),
-                  r,
-                  pbuf->len);
+        ssize_t r = ::sendto(fd, pbuf->data, pbuf->len, 0, sock, addrlen);
+        if (r == -1) {
+            if (errno != EAGAIN && errno != ECONNREFUSED && errno != ENETUNREACH) {
+                log_error("UDP %s: Error sending udp packet (%m)", _name.c_str());
+            }
+            return -errno;
+        };
+
+        _stat.write.total++;
+        _stat.write.bytes += pbuf->len;
+
+        /* Incomplete packet, we warn and discard the rest */
+        if (r != (ssize_t)pbuf->len) {
+            _incomplete_msgs++;
+            log_debug("UDP %s: Discarding packet, incomplete write %zd but len=%u",
+                      _name.c_str(),
+                      r,
+                      pbuf->len);
+        }
+
+        log_debug("UDP [%d]%s: Wrote %zd bytes", fd, _name.c_str(), r);
+
+        return r;
     }
-
-    log_debug("UDP [%d]%s: Wrote %zd bytes", fd, _name.c_str(), r);
-
-    return r;
 }
 
 int UdpEndpoint::parse_udp_mode(const char *val, size_t val_len, void *storage, size_t storage_len)
@@ -1289,12 +1370,8 @@ TcpEndpoint::~TcpEndpoint()
     close();
 }
 
-bool TcpEndpoint::setup(TcpEndpointConfig conf)
+bool TcpEndpoint::setup(const TcpEndpointConfig& conf)
 {
-    if (!this->validate_config(conf)) {
-        return false;
-    }
-
     this->_ip = conf.address;
     this->_port = conf.port;
     this->_retry_timeout = conf.retry_timeout;

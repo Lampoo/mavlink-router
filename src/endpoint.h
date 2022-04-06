@@ -24,6 +24,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <cstdarg>
+#include <net/if.h>
 
 #include "comm.h"
 #include "pollable.h"
@@ -105,8 +107,312 @@ struct _packed_ mavlink_router_mavlink1_header {
     uint8_t msgid;
 };
 
+/// Compare two addresses for equality.
+static bool operator==(const struct sockaddr_in& lhs, const struct sockaddr_in& rhs)
+{
+    return lhs.sin_addr.s_addr == rhs.sin_addr.s_addr && lhs.sin_port == rhs.sin_port;
+}
+
+/// Compare two addresses for inequality.
+static bool operator!=(const struct sockaddr_in& lhs, const struct sockaddr_in& rhs)
+{
+    return lhs.sin_addr.s_addr != rhs.sin_addr.s_addr || lhs.sin_port != rhs.sin_port;
+}
+
+/// Compare two addreses for ordering.
+static bool operator<(const struct sockaddr_in& lhs, const struct sockaddr_in& rhs)
+{
+    if (lhs.sin_addr.s_addr < rhs.sin_addr.s_addr)
+        return true;
+    if (lhs.sin_addr.s_addr > rhs.sin_addr.s_addr)
+        return false;
+    return lhs.sin_port < rhs.sin_port;
+}
+
+/// Compare two addresses for equality.
+static bool operator==(const struct sockaddr_in6& lhs, const struct sockaddr_in6& rhs)
+{
+    return IN6_ARE_ADDR_EQUAL(&lhs.sin6_addr, &rhs.sin6_addr) && lhs.sin6_port == rhs.sin6_port && lhs.sin6_scope_id == rhs.sin6_scope_id;
+}
+
+/// Compare two addresses for inequality.
+static bool operator!=(const struct sockaddr_in6& lhs, const struct sockaddr_in6& rhs)
+{
+    return !IN6_ARE_ADDR_EQUAL(&lhs.sin6_addr, &rhs.sin6_addr) || lhs.sin6_port != rhs.sin6_port || lhs.sin6_scope_id != rhs.sin6_scope_id;
+}
+
+/// Compare two addreses for ordering.
+static bool operator<(const struct sockaddr_in6& lhs, const struct sockaddr_in6& rhs)
+{
+    int result = memcmp(&lhs.sin6_addr, &rhs.sin6_addr, sizeof(struct in6_addr));
+    if (result < 0)
+        return true;
+    if (result > 0)
+        return false;
+    if (lhs.sin6_scope_id < rhs.sin6_scope_id)
+        return true;
+    if (lhs.sin6_scope_id > rhs.sin6_scope_id)
+        return false;
+    return lhs.sin6_port < rhs.sin6_port;
+}
+
+/// C++ class for MAVLink system
+class MAVLinkSystem {
+public:
+    /// Default constructor
+    MAVLinkSystem()
+    {
+        system_id_ = 1;
+    }
+
+    /// Copy constructor
+    MAVLinkSystem(const MAVLinkSystem& other)
+        : system_id_(other.system_id_)
+        , component_ids_(other.component_ids_)
+    {
+    }
+
+    /// Move constructor
+    MAVLinkSystem(MAVLinkSystem&& other)
+        : system_id_(other.system_id_)
+        , component_ids_(std::move(other.component_ids_))
+    {
+    }
+
+    int get_system_id() const
+    {
+        return static_cast<int>(system_id_);
+    }
+
+    void set_system_id(int system_id)
+    {
+        if (system_id > 0 && system_id != system_id_)
+            system_id_ = static_cast<uint8_t>(system_id);
+    }
+
+    void add_component(int component_id)
+    {
+        if (component_id == 0 || component_id == -1)
+            return;
+        for (auto it = component_ids_.begin(); it != component_ids_.end(); it++) {
+            if (*it == static_cast<uint8_t>(component_id))
+                return;
+        }
+        component_ids_.push_back(static_cast<uint8_t>(component_id));
+    }
+
+    bool has_system(int system_id) const
+    {
+        if (system_id == 0 || system_id == -1)
+            return true;
+        return get_system_id() == system_id;
+    }
+
+    bool has_component(int component_id) const
+    {
+        if (component_id == 0 || component_id == -1)
+            return true;
+        for (auto it = component_ids_.begin(); it != component_ids_.end(); it++) {
+            if (*it == static_cast<uint8_t>(component_id))
+                return true;
+        }
+        return false;
+    }
+
+    bool has_autopilot() const
+    {
+        for (auto it = component_ids_.begin(); it != component_ids_.end(); it++) {
+            if (*it == MAV_COMP_ID_AUTOPILOT1)
+                return true;
+        }
+        return false;
+    }
+
+    bool has_camera() const
+    {
+        for (auto it = component_ids_.begin(); it != component_ids_.end(); it++) {
+            if (*it >= 	MAV_COMP_ID_CAMERA && *it <= MAV_COMP_ID_CAMERA6)
+                return true;
+        }
+        return false;
+    }
+
+    bool has_gimbal() const
+    {
+        for (auto it = component_ids_.begin(); it != component_ids_.end(); it++) {
+            if (*it == MAV_COMP_ID_GIMBAL)
+                return true;
+            else if (*it >= MAV_COMP_ID_GIMBAL2 && *it <= MAV_COMP_ID_GIMBAL6)
+                return true;
+        }
+        return false;
+    }
+
+    bool operator==(const MAVLinkSystem& other)
+    {
+        return system_id_ == other.system_id_;
+    }
+
+    bool operator!=(const MAVLinkSystem& other)
+    {
+        return system_id_ != other.system_id_;
+    }
+
+    bool operator<(const MAVLinkSystem& other)
+    {
+        return system_id_ < other.system_id_;
+    }
+
+private:
+    uint8_t system_id_;
+    std::vector<uint8_t> component_ids_;
+};
+
+/// C++ class for struct sockaddr
+class Sockaddress {
+public:
+    typedef union {
+        struct sockaddr         base;
+        struct sockaddr_in      v4;
+        struct sockaddr_in6     v6;
+        struct sockaddr_storage storage;
+    } sock_type;
+
+    /// Default constructor.
+    Sockaddress() {
+        sockaddr_.v4.sin_family = AF_INET;
+        sockaddr_.v4.sin_port = 0;
+        sockaddr_.v4.sin_addr.s_addr = INADDR_ANY;
+    }
+    /// Construct from a IPv4 sock address.
+    explicit Sockaddress(const sock_type& sockaddr)
+    {
+        memcpy(&sockaddr_, &sockaddr, sizeof(sockaddr_));
+    }
+    /// Construct from a IPv4 sock address.
+    explicit Sockaddress(const struct sockaddr_in& v4)
+    {
+        sockaddr_.v4 = v4;
+    }
+    /// Construct from a IPv6 sock address.
+    explicit Sockaddress(const struct sockaddr_in6& v6)
+    {
+        sockaddr_.v6 = v6;
+    }
+    /// Copy constructor
+    Sockaddress(const Sockaddress& other)
+    {
+        sockaddr_ = other.sockaddr_;
+    }
+    /// Assignment
+    Sockaddress& operator=(const Sockaddress& other)
+    {
+        sockaddr_ = other.sockaddr_;
+        return *this;
+    }
+
+    /// Convert to string in format of ip:port
+    std::string to_string()
+    {
+        char addr_str[256];
+
+        if (sockaddr_.base.sa_family == AF_INET) {
+            const char *addr = inet_ntop(AF_INET, &sockaddr_.v4.sin_addr, addr_str, INET_ADDRSTRLEN);
+            if (addr == 0)
+                return std::string();
+            return format("%s:%u", addr, sockaddr_.v4.sin_port);
+        } else if (sockaddr_.base.sa_family == AF_INET6) {
+            const char *addr = inet_ntop(AF_INET, &sockaddr_.v6.sin6_addr, addr_str, INET6_ADDRSTRLEN);
+            if (addr == 0)
+                return std::string();
+            bool is_local_link = IN6_IS_ADDR_LINKLOCAL(&sockaddr_.v6.sin6_addr);
+            if (is_local_link) {
+                if (sockaddr_.v6.sin6_scope_id != 0) {
+                    char ifname[IF_NAMESIZE + 1] = "%";
+                    if (if_indextoname(sockaddr_.v6.sin6_scope_id, ifname + 1)) {
+                        strcat(addr_str, ifname);
+                    }
+                }
+            }
+            return format("%s:%u", addr, sockaddr_.v6.sin6_port);
+        }
+
+        return std::string();
+    }
+
+    /// Get native sock address
+    const struct sockaddr* addr() const
+    {
+        return &sockaddr_.base;
+    }
+    /// Get native size of sock
+    ssize_t addrlen() const
+    {
+        if (sockaddr_.base.sa_family == AF_INET)
+            return sizeof(struct sockaddr_in);
+        else if (sockaddr_.base.sa_family == AF_INET6)
+            return sizeof(struct sockaddr_in6);
+        return 0;
+    }
+    /// Compare for equality
+    bool operator==(const Sockaddress& other) const
+    {
+        if (sockaddr_.base.sa_family != other.sockaddr_.base.sa_family)
+            return false;
+        if (sockaddr_.base.sa_family == AF_INET)
+            return sockaddr_.v4 == other.sockaddr_.v4;
+        if (sockaddr_.base.sa_family == AF_INET6)
+            return sockaddr_.v6 == other.sockaddr_.v6;
+        return false;
+    }
+    /// Compare for inequality
+    bool operator!=(const Sockaddress& other) const
+    {
+        if (sockaddr_.base.sa_family != other.sockaddr_.base.sa_family)
+            return true;
+        if (sockaddr_.base.sa_family == AF_INET)
+            return sockaddr_.v4 != other.sockaddr_.v4;
+        if (sockaddr_.base.sa_family == AF_INET6)
+            return sockaddr_.v6 != other.sockaddr_.v6;
+        return true;
+    }
+    /// For ordering
+    bool operator<(const Sockaddress& other) const
+    {
+        if (sockaddr_.base.sa_family < other.sockaddr_.base.sa_family)
+            return true;
+        if (sockaddr_.base.sa_family > other.sockaddr_.base.sa_family)
+            return false;
+        if (sockaddr_.base.sa_family == AF_INET)
+            return sockaddr_.v4 < other.sockaddr_.v4;
+        if (sockaddr_.base.sa_family == AF_INET6)
+            return sockaddr_.v6 < other.sockaddr_.v6;
+        return true;
+    }
+
+private:
+    std::string format(const char *format, ...)
+    {
+        char buffer[1024];
+        va_list va;
+
+        va_start(va, format);
+        vsnprintf(buffer, sizeof(buffer), format, va);
+        va_end(va);
+
+        return std::string(buffer);
+    }
+
+private:
+    sock_type sockaddr_;
+};
+
 class Endpoint : public Pollable {
 public:
+    using MAVLinkSystemCollection = std::vector<MAVLinkSystem>;
+    using MAVLinkSockaddress = std::pair<Sockaddress, MAVLinkSystemCollection>;
+    using MAVLinkSockaddressCollection = std::vector<MAVLinkSockaddress>;
+
     /*
      * Success returns for @read_msg()
      */
@@ -128,6 +434,7 @@ public:
     ~Endpoint() override;
 
     int handle_read() override;
+    virtual int handle_msg(struct buffer* pbuf);
     bool handle_canwrite() override;
 
     virtual void print_statistics();
@@ -212,7 +519,7 @@ public:
     int write_msg(const struct buffer *pbuf) override;
     int flush_pending_msgs() override { return -ENOSYS; }
 
-    bool setup(UartEndpointConfig config); ///< open UART device and apply config
+    bool setup(const UartEndpointConfig &config); ///< open UART device and apply config
 
     static const ConfFile::OptionsTable option_table[];
     static const char *section_pattern;
@@ -240,16 +547,18 @@ public:
     UdpEndpoint(std::string name);
     ~UdpEndpoint() override;
 
+    int handle_msg(struct buffer* pbuf) override;
     int write_msg(const struct buffer *pbuf) override;
     int flush_pending_msgs() override { return -ENOSYS; }
 
-    bool setup(UdpEndpointConfig config); ///< open socket and apply config
+    bool setup(const UdpEndpointConfig &config); ///< open socket and apply config
 
     static const ConfFile::OptionsTable option_table[];
     static const char *section_pattern;
     static int parse_udp_mode(const char *val, size_t val_len, void *storage, size_t storage_len);
     static bool validate_config(const UdpEndpointConfig &config);
 
+    static std::shared_ptr<Endpoint> from();
 protected:
     bool open(const char *ip, unsigned long port,
               UdpEndpointConfig::Mode mode = UdpEndpointConfig::Mode::Client);
@@ -258,18 +567,15 @@ protected:
 
     ssize_t _read_msg(uint8_t *buf, size_t len) override;
 
-    union {
-        struct sockaddr_in v4;
-        struct sockaddr_in6 v6;
-    } config_sock;
-
+    Sockaddress::sock_type config_sock;
     Timeout *nomessage_timeout = nullptr;
     bool _nomessage_timeout_cb(void *data);
 
 private:
     bool is_ipv6;
-    struct sockaddr_in sockaddr;
-    struct sockaddr_in6 sockaddr6;
+    bool is_server;
+    Sockaddress::sock_type sockaddr_;
+    Endpoint::MAVLinkSockaddressCollection sockaddr_senders_;
 };
 
 class TcpEndpoint : public Endpoint {
@@ -285,7 +591,7 @@ public:
     Endpoint::AcceptState accept_msg(const struct buffer *pbuf) const;
 
     int accept(int listener_fd);        ///< accept incoming connection
-    bool setup(TcpEndpointConfig conf); ///< open connection and apply config
+    bool setup(const TcpEndpointConfig &conf); ///< open connection and apply config
     bool reopen();                      ///< re-try connecting to the server
     void close();
 

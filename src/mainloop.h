@@ -65,7 +65,7 @@ public:
     void del_timeout(Timeout *t);
     void mod_timeout(Timeout *t, uint32_t timeout_msec);
 
-    bool add_endpoints(const Configuration &config);
+    bool add_endpoints(const Configuration &conf);
     void clear_endpoints();
 
     /*
